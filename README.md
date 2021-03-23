@@ -1,4 +1,4 @@
-[![DOI](https://zenodo.org/badge/..../.svg)](https://doi.org/###/zenodo.###)
+<!-- [![DOI](https://zenodo.org/badge/..../.svg)](https://doi.org/###/zenodo.###) -->
 
 # AUTHOR_Running-title
 
