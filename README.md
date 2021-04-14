@@ -1,11 +1,10 @@
 
-<!-- [![DOI](https://zenodo.org/badge/..../.svg)](https://doi.org/###/zenodo.###) -->
+[![DOI](https://zenodo.org/badge/350563045.svg)](https://zenodo.org/badge/latestdoi/350563045)
+
 
 # RAEBURN_Nuclear-versus-cytoplasmic-proteostasis
 
 This repository contains the analysis code associated with the **Organellar Proteostasis** project, led by Candice Raeburn. This manuscript has been submitted for publication under the title *The cytoplasmic milieu is more able to mitigate protein homeostasis imbalance than the nucleus: a prime role of the heat shock 40 and 70 chaperone system*.
-
-This manuscript has been submitted and a link to the final version will be provided upon publication.
 
 ## Prerequisites
 
