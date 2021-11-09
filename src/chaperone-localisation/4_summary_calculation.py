@@ -6,9 +6,8 @@ import seaborn as sns
 import skimage.io
 import functools
 
+from GEN_Utils import FileHandling
 from loguru import logger
-
-from utilities.file_handling import df_to_excel
 
 logger.info('Import OK')
 
@@ -16,57 +15,64 @@ logger.info('Import OK')
 input_folder = f'results/chaperone_localisation/pixel_collection/'
 output_folder = f'results/chaperone_localisation/summary_calculations/'
 
+fret_channel = 3
+overlap_threshold = 0.5
 
 if not os.path.exists(output_folder):
     os.mkdir(output_folder)
 
-
 # read in calculated pixel data
 file_list = [filename for filename in os.listdir(input_folder) if '.csv' in filename]
 pixels = {filename.replace('.csv', ''): pd.read_csv(f'{input_folder}{filename}') for filename in file_list}
+pixels.update({key: value.drop([col for col in value.columns.tolist() if 'Unnamed: ' in col], axis=1) for key, value in pixels.items()})
 
-# generate summary df for mask, channel of interest
+# generate summary df, collect only channel of interest
 pixels_compiled = pd.concat(pixels.values())
-pixels_compiled.drop([col for col in pixels_compiled.columns.tolist() if 'Unnamed: ' in col], axis=1, inplace=True)
+pixels_compiled = pd.pivot_table(pixels_compiled, index=['x', 'y', 'mask_type', 'cell'], columns=['channel'], values=['intensity']).reset_index()
+pixels_compiled.columns = [
+    '_'.join(str(val) for val in x) if type(x[1]) == int else x[0]
+    for x in pixels_compiled.columns
+]
 
-# determine mean per object (cell, cytoplasm, nuclei) for each channel for each sample
-quant_cols = [col for col in pixels_compiled.columns.tolist() if 'channel_' in col]
-summary = pixels_compiled.groupby(['image_name', 'cell_number', 'mask_type']).agg({col: ['mean', 'std'] for col in quant_cols})
-# fix column names to remove multi-index
-summary.columns = ['_'.join(col).strip() for col in summary.columns.values]
-summary.reset_index(inplace=True)
 
-# Assign per-treatment identifiers
-summary[['chaperone', 'mutant', 'replicate']] = summary['image_name'].str.split('_', expand=True)
+# Add label if aggregate inside unmasked (i.e. same compartment)
+aggregate_cells = pixels_compiled[pixels_compiled['mask_type'] == 'aggregate']['cell'].unique()
+
+
+# generate mean values for each ROI for each timepoint
+pixels_mean = pixels_compiled.copy().groupby(['cell', 'mask_type']).median().reset_index()
+
+# assign identifiers
+pixels_mean[['treatment', 'chaperone', 'image_number', 'discard2', 'cell_number']] = pixels_mean['cell'].str.split('_', expand=True)
+pixels_mean.drop(['discard2'], axis=1, inplace=True)
+
+pixels_mean['aggregate_cell'] = [1 if cell in aggregate_cells else np.nan for cell in pixels_mean['cell']]
 
 # generate nucleus vs cytoplasm ratio
-quant_cols = [col for col in summary.columns.tolist() if 'mean' in col]
-info_cols = ['image_name', 'cell_number', 'chaperone', 'mutant', 'replicate']
-cytoplasm = summary[summary['mask_type'] == 'cytoplasm'].copy().set_index(info_cols)[quant_cols]
-nucleus = summary[summary['mask_type'] == 'nucleus'].copy().set_index(info_cols)[quant_cols]
+quant_col = 'intensity_3'
+info_cols = ['treatment', 'chaperone', 'image_number', 'cell_number', 'aggregate_cell']
+cytoplasm = pixels_mean[pixels_mean['mask_type'] == 'cytoplasm'].copy().set_index(info_cols)[quant_col].reset_index().rename(columns={'intensity_3': 'cytoplasm'})
+nucleus = pixels_mean[pixels_mean['mask_type'] == 'nucleus'].copy().set_index(info_cols)[quant_col].reset_index().rename(columns={'intensity_3': 'nucleus'})
 
-ratio = cytoplasm / nucleus
+ratio = functools.reduce(lambda left, right: pd.merge(left, right, on=info_cols, how='outer'), [cytoplasm, nucleus])
+ratio['nuc-cyto_ratio'] = ratio['nucleus'] / ratio['cytoplasm']
 
 
 # save to excel
-df_to_excel(
-    output_path=f'{output_folder}summary_calculations.xlsx', 
-    sheetnames=['summary', 'cyto-nuc_ratio'], 
-    data_frames=[summary, ratio.reset_index()])
+FileHandling.df_to_excel(output_path=f'{output_folder}summary_calculations.xlsx', sheetnames=['summary', 'nuc-cyto_ratio'], data_frames=[pixels_mean, ratio])
+# pixels_mean.to_csv(f'{output_folder}pixel_summary.csv')
 
-# visualise example channel 2
-info_cols = ['image_name', 'cell_number', 'chaperone', 'mutant', 'replicate']
-for_plotting = ratio.reset_index().copy()
+# ------------------------visualise------------------------
+for_plotting = ratio.copy()
+for_plotting['aggregate_cell'] = for_plotting['aggregate_cell'].fillna(0)
+for_plotting['sample_key'] = for_plotting['treatment'] +' '+ for_plotting['chaperone']
 
-color_dict = {'Hsp40': 'firebrick', 'Hsp70': 'darkorange'}
+
+color_dict = {1: 'rebeccapurple', 0: 'darkorange'}
 
 fig, ax = plt.subplots()
-sns.boxplot(x='mutant', y=f'channel_2_mean', data=for_plotting.groupby(['chaperone', 'mutant']).mean().reset_index(), hue='chaperone')
-sns.stripplot(x='mutant', y=f'channel_2_mean', data=for_plotting, hue='chaperone', palette=color_dict, alpha=0.7, dodge=True)
-# Get the handles and labels.
-handles, labels = ax.get_legend_handles_labels()
-# When creating the legend, only use the second half of the elements to use those from scatter
-l = plt.legend(handles[int(len(handles)/2):], labels[int(len(handles)/2):], bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
-plt.ylabel('Mean ratio (cytoplasm / nucleus)')
-plt.xlabel('Variant')
+sns.swarmplot(x='sample_key', y='nuc-cyto_ratio', data=for_plotting, hue='aggregate_cell', palette=color_dict, dodge=True)
+plt.legend(title='Aggregate cell')
+plt.xlabel('Sample')
+plt.ylabel('Mean intensity ratio (Nucleus/Cytoplasm)')
 plt.show()
